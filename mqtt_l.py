@@ -1,115 +1,102 @@
 import paho.mqtt.client as mqtt
 import serial
 import time
+import json
 import sys
-import json # JSON 처리를 위해 json 라이브러리 추가
 
 # --- 시리얼 포트 설정 ---
-SERIAL_PORT = "/dev/cu.usbserial-1120"  # 아두이노 포트로 변경 (사용자 설정)
-BAUD_RATE = 9600  # 아두이노와 동일한 보드레이트 설정 (아두이노 코드와 일치해야 함)
+SERIAL_PORT = "/dev/cu.usbserial-110" # 아두이노 포트
+BAUD_RATE = 9600
 
-# 시리얼 연결 초기화
+# --- MQTT 설정 ---
+BROKER_ADDRESS = "10.150.2.255" # MQTT 브로커 주소
+BROKER_PORT = 1883
+
+# --- 토픽 정의 ---
+ORDER_TOPIC = "bssm/wodnr"  # 주문을 받아오는 토픽
+STOCK_TOPIC = "stock/topic"  # 재고 정보를 발행할 토픽
+
+
+# --- 시리얼 연결 초기화 ---
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-    time.sleep(2)  # 아두이노 초기화 대기 (필요 시 조절)
-    print(f"Arduino에 시리얼 연결 성공: {SERIAL_PORT}")
+    time.sleep(2) # 아두이노 초기화 대기
+    print("Arduino 시리얼 연결 성공.")
 except serial.SerialException as e:
     print(f"시리얼 연결 실패: {e}")
-    sys.exit(1) # 연결 실패 시 프로그램 종료
+    sys.exit(1)
 
 # --- MQTT 콜백 함수 ---
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print("MQTT 브로커에 성공적으로 연결되었습니다!")
-        client.subscribe("bssm/wodnr") # 구독할 토픽
-        print("토픽 구독 시작: bssm/wodnr")
+        print("MQTT 브로커 연결 성공.")
+        client.subscribe(ORDER_TOPIC) 
+        print(f"'{ORDER_TOPIC}' 토픽 구독 시작.")
     else:
-        print(f"MQTT 브로커 연결 실패, 에러 코드: {reason_code}")
-        # 연결 실패 시 시리얼 포트 닫고 종료
-        if ser and ser.is_open:
-            ser.close()
+        print(f"MQTT 브로커 연결 실패: {reason_code}")
         sys.exit(1)
 
 def on_message(client, userdata, msg):
-    # 메시지 수신 시 토픽과 원본 페이로드 출력
-    raw_payload = msg.payload.decode().strip() # 수신된 메시지 디코딩 및 공백 제거
-    print(f"\n--- MQTT 메시지 수신 ---")
-    print(f"토픽: {msg.topic}")
-    print(f"원본 메시지 (JSON): '{raw_payload}'")
-    print(f"---------------------------\n")
+    # 주문 토픽에서 메시지가 오면 처리
+    if msg.topic == ORDER_TOPIC:
+        try:
+            data = json.loads(msg.payload.decode().strip())
+            
+            # 서보 모터 제어 (예시로 설탕임)
+            if "sugar" in data:
+                command_to_arduino = "S" + str(data["sugar"])
+                ser.write(command_to_arduino.encode())
+                print(f"서보 제어 명령 아두이노로 전송 (주문): {command_to_arduino}")
 
-    try:
-        # JSON 문자열을 파싱
-        # JSON 객체 형태 ({"key": value, ...})를 가정합니다.
-        data = json.loads(raw_payload) 
-
-        # 모든 키-값 쌍 콘솔에 출력
-        print("JSON 데이터 파싱 완료:")
-        for key, value in data.items():
-            print(f"  {key}: {value}")
-        print("---------------------------\n")
-
-        # 'sugar' 키의 값만 아두이노로 전송
-        if "sugar" in data:
-            value_to_send = str(data["sugar"]) # 'sugar' 값을 문자열로 변환하여 전송
-            try:
-                ser.write(value_to_send.encode())  # 아두이노로 'sugar' 값 전송
-                print(f"아두이노로 전송 완료 ('sugar' 값): '{value_to_send}'")
-            except serial.SerialException as e:
-                print(f"아두이노로 전송 실패: {e}")
-        else:
-            print("오류: JSON 데이터에 'sugar' 키가 없습니다. 아두이노로 보낼 값이 없습니다.")
-
-    except json.JSONDecodeError as e:
-        print(f"오류: JSON 파싱 실패 - {e}")
-        print(f"수신된 메시지가 올바른 JSON 형식이 아닙니다: '{raw_payload}'")
-    except Exception as e:
-        print(f"알 수 없는 오류 발생: {e}")
-
+        except json.JSONDecodeError:
+            print(f"수신된 메시지 JSON 파싱 오류: {msg.payload.decode().strip()}")
+        except Exception as e:
+            print(f"MQTT 메시지 처리 중 오류 발생: {e}")
+    else:
+        pass
 
 # --- MQTT 클라이언트 설정 ---
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2) 
 client.on_connect = on_connect
 client.on_message = on_message
 
-# --- 브로커 연결 설정 ---
-broker_address = "10.150.2.255"  # 원격 데스크톱 IP 주소 (사용자 설정)
-port = 1883 # 기본 MQTT 포트
-
-# (선택 사항) 만약 Mosquitto 브로커에 사용자명/비밀번호가 설정되어 있다면 아래 주석을 해제하고 입력하세요.
-# client.username_pw_set("your_mosquitto_username", "your_mosquitto_password")
-
-# 브로커에 연결 시도
+# --- 브로커 연결 시도 ---
 try:
-    print(f"MQTT 브로커 '{broker_address}:{port}'에 연결 시도 중...")
-    client.connect(broker_address, port, 60)
+    client.connect(BROKER_ADDRESS, BROKER_PORT, 60)
 except Exception as e:
     print(f"MQTT 연결 실패: {e}")
-    if ser and ser.is_open:
-        ser.close()
     sys.exit(1)
 
-# --- 네트워크 루프 시작 및 프로그램 유지 ---
 client.loop_start() 
+print("시스템 시작: MQTT 메시지 수신/발신 대기 중.")
 
-print("MQTT 메시지 수신 대기 중입니다. 프로그램을 종료하려면 Ctrl+C를 누르세요.")
-
+# --- 메인 루프: 아두이노 시리얼 읽기 및 MQTT 발행 ---
 try:
     while True:
-        # 아두이노에서 시리얼로 데이터를 보낸다면 여기서 읽을 수 있습니다.
         if ser.in_waiting > 0:
             arduino_data = ser.readline().decode('utf-8').strip()
-            if arduino_data:
-                print(f"아두이노로부터 수신: {arduino_data}")
-        time.sleep(0.1) 
+            
+            # 조도 센서 상태 파싱 및 MQTT 발행
+            if arduino_data.startswith("LIGHT_STATE:"):
+                light_state = arduino_data.replace("LIGHT_STATE:", "").strip()
+                if light_state in ["HIGH", "LOW"]:
+                    light_sensor_json = {"light_sensor": light_state}
+                    client.publish(STOCK_TOPIC, json.dumps(light_sensor_json))
+                    print(f"조도 센서 상태 MQTT 발행 ('{STOCK_TOPIC}'): {json.dumps(light_sensor_json)}")
+            
+            # 플로트 스위치 상태 파싱 및 MQTT 발행
+            elif arduino_data.startswith("FLOAT_STATE:"):
+                float_state = arduino_data.replace("FLOAT_STATE:", "").strip()
+                if float_state in ["EMPTY", "FULL"]:
+                    float_sensor_json = {"liquid_stock": float_state} 
+                    client.publish(STOCK_TOPIC, json.dumps(float_sensor_json))
+                    print(f"액체 재고 상태 MQTT 발행 ('{STOCK_TOPIC}'): {json.dumps(float_sensor_json)}")
+
+        time.sleep(0.05)
 except KeyboardInterrupt:
-    print("\n프로그램 종료 요청 감지. 연결을 해제합니다...")
+    print("프로그램 종료 요청.")
 finally:
-    if client:
-        client.loop_stop() 
-        client.disconnect() 
-        print("MQTT 클라이언트 연결 해제 완료.")
-    if ser and ser.is_open:
-        ser.close() 
-        print("아두이노 시리얼 포트 닫기 완료.")
-    print("프로그램이 종료되었습니다.")
+    client.loop_stop() 
+    client.disconnect() 
+    ser.close() 
+    print("연결 해제 및 프로그램 종료.")
