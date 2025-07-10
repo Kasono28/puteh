@@ -5,11 +5,11 @@ import json
 import sys
 
 # --- 시리얼 포트 설정 ---
-SERIAL_PORT = "/dev/cu.usbserial-110" # 아두이노 포트
+SERIAL_PORT = "/dev/cu.usbserial-120" # 아두이노 포트
 BAUD_RATE = 9600
 
 # --- MQTT 설정 ---
-BROKER_ADDRESS = "10.150.2.255" # MQTT 브로커 주소
+BROKER_ADDRESS = "10.129.59.145" # MQTT 브로커 주소
 BROKER_PORT = 1883
 
 # --- 토픽 정의 ---
@@ -45,14 +45,17 @@ def on_message(client, userdata, msg):
         try:
             data = json.loads(msg.payload.decode().strip())
 
-            # 서보 모터 제어 (예시로 설탕임)
+            # 서보 모터 제어
             if "sugar" in data:
                 command_to_arduino = "S" + str(data["sugar"])
                 ser.write(command_to_arduino.encode())
-                print(f"서보 제어 명령 아두이노로 전송 (주문): {command_to_arduino}")
+                print(f"서보 제어 명령 아두이노로 전송 (설탕 주문): {command_to_arduino}")
 
-        except json.JSONDecodeError:
-            print(f"수신된 메시지 JSON 파싱 오류: {msg.payload.decode().strip()}")
+            # 펌프 제어
+            if "water" in data:
+                command_to_arduino = "W" + str(data["water"])
+                ser.write(command_to_arduino.encode())
+                print(f"펌프 제어 명령 아두이노로 전송 (물 주문): {command_to_arduino}")
         except Exception as e:
             print(f"MQTT 메시지 처리 중 오류 발생: {e}")
     else:
@@ -83,15 +86,15 @@ try:
             if arduino_data.startswith("LIGHT_STATE:"):
                 light_state = arduino_data.replace("LIGHT_STATE:", "").strip()
                 if light_state in ["HIGH", "LOW"]:
-                    current_light_state = light_state # 전역 변수 직접 수정
-            
+                    current_light_state = light_state
+
             # 플로트 스위치 상태 업데이트
             elif arduino_data.startswith("FLOAT_STATE:"):
                 float_state = arduino_data.replace("FLOAT_STATE:", "").strip()
                 if float_state in ["EMPTY", "FULL"]:
-                    current_liquid_stock = float_state # 전역 변수 직접 수정
+                    current_liquid_stock = float_state
 
-            # 두 센서 상태가 모두 업데이트되면 Json 발행
+            # 두 센서 상태가 모두 업데이트되면 통합 JSON 발행
             if current_light_state is not None and current_liquid_stock is not None:
                 combined_stock_json = {
                     "light_sensor": current_light_state,
