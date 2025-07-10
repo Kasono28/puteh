@@ -16,6 +16,9 @@ BROKER_PORT = 1883
 ORDER_TOPIC = "bssm/wodnr"  # 주문을 받아오는 토픽
 STOCK_TOPIC = "stock/topic"  # 재고 정보를 발행할 토픽
 
+# --- 재고 상태 임시 저장 변수 ---
+current_light_state = None
+current_liquid_stock = None
 
 # --- 시리얼 연결 초기화 ---
 try:
@@ -30,7 +33,7 @@ except serial.SerialException as e:
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
         print("MQTT 브로커 연결 성공.")
-        client.subscribe(ORDER_TOPIC) 
+        client.subscribe(ORDER_TOPIC)
         print(f"'{ORDER_TOPIC}' 토픽 구독 시작.")
     else:
         print(f"MQTT 브로커 연결 실패: {reason_code}")
@@ -41,7 +44,7 @@ def on_message(client, userdata, msg):
     if msg.topic == ORDER_TOPIC:
         try:
             data = json.loads(msg.payload.decode().strip())
-            
+
             # 서보 모터 제어 (예시로 설탕임)
             if "sugar" in data:
                 command_to_arduino = "S" + str(data["sugar"])
@@ -56,7 +59,7 @@ def on_message(client, userdata, msg):
         pass
 
 # --- MQTT 클라이언트 설정 ---
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2) 
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.on_connect = on_connect
 client.on_message = on_message
 
@@ -67,7 +70,7 @@ except Exception as e:
     print(f"MQTT 연결 실패: {e}")
     sys.exit(1)
 
-client.loop_start() 
+client.loop_start()
 print("시스템 시작: MQTT 메시지 수신/발신 대기 중.")
 
 # --- 메인 루프: 아두이노 시리얼 읽기 및 MQTT 발행 ---
@@ -75,28 +78,37 @@ try:
     while True:
         if ser.in_waiting > 0:
             arduino_data = ser.readline().decode('utf-8').strip()
-            
-            # 조도 센서 상태 파싱 및 MQTT 발행
+
+            # 조도 센서 상태 업데이트
             if arduino_data.startswith("LIGHT_STATE:"):
                 light_state = arduino_data.replace("LIGHT_STATE:", "").strip()
                 if light_state in ["HIGH", "LOW"]:
-                    light_sensor_json = {"light_sensor": light_state}
-                    client.publish(STOCK_TOPIC, json.dumps(light_sensor_json))
-                    print(f"조도 센서 상태 MQTT 발행 ('{STOCK_TOPIC}'): {json.dumps(light_sensor_json)}")
+                    current_light_state = light_state # 전역 변수 직접 수정
             
-            # 플로트 스위치 상태 파싱 및 MQTT 발행
+            # 플로트 스위치 상태 업데이트
             elif arduino_data.startswith("FLOAT_STATE:"):
                 float_state = arduino_data.replace("FLOAT_STATE:", "").strip()
                 if float_state in ["EMPTY", "FULL"]:
-                    float_sensor_json = {"liquid_stock": float_state} 
-                    client.publish(STOCK_TOPIC, json.dumps(float_sensor_json))
-                    print(f"액체 재고 상태 MQTT 발행 ('{STOCK_TOPIC}'): {json.dumps(float_sensor_json)}")
+                    current_liquid_stock = float_state # 전역 변수 직접 수정
+
+            # 두 센서 상태가 모두 업데이트되면 Json 발행
+            if current_light_state is not None and current_liquid_stock is not None:
+                combined_stock_json = {
+                    "light_sensor": current_light_state,
+                    "liquid_stock": current_liquid_stock
+                }
+                client.publish(STOCK_TOPIC, json.dumps(combined_stock_json))
+                print(f"통합 재고 상태 MQTT 발행 ('{STOCK_TOPIC}'): {json.dumps(combined_stock_json)}")
+
+                # 발행 후 상태 초기화
+                current_light_state = None
+                current_liquid_stock = None
 
         time.sleep(0.05)
 except KeyboardInterrupt:
     print("프로그램 종료 요청.")
 finally:
-    client.loop_stop() 
-    client.disconnect() 
-    ser.close() 
+    client.loop_stop()
+    client.disconnect()
+    ser.close()
     print("연결 해제 및 프로그램 종료.")
