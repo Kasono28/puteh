@@ -23,7 +23,7 @@ current_liquid_stock = None
 # --- 시리얼 연결 초기화 ---
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-    time.sleep(2) # 아두이노 초기화 대기
+    time.sleep(2)
     print("Arduino 시리얼 연결 성공.")
 except serial.SerialException as e:
     print(f"시리얼 연결 실패: {e}")
@@ -76,7 +76,7 @@ except Exception as e:
 client.loop_start()
 print("시스템 시작: MQTT 메시지 수신/발신 대기 중.")
 
-# --- 메인 루프: 아두이노 시리얼 읽기 및 MQTT 발행 ---
+# --- MQTT 발행 ---
 try:
     while True:
         if ser.in_waiting > 0:
